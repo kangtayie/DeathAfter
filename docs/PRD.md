@@ -1,4 +1,4 @@
-# PRD — DeathAfter (작업명)
+# PRD — DeathAfter
 
 ## 한 줄 정의
 
