@@ -75,7 +75,7 @@ export default function SignUpScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)')} style={styles.backButton}>
               <Text style={styles.backText}>← 뒤로</Text>
             </TouchableOpacity>
             <Text style={styles.title}>

@@ -60,7 +60,7 @@ export default function LoginScreen() {
       >
         <View style={styles.inner}>
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/(auth)')} style={styles.backButton}>
               <Text style={styles.backText}>← 뒤로</Text>
             </TouchableOpacity>
             <Text style={styles.title}>다시 오셨군요</Text>
