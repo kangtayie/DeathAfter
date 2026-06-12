@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
+import { AuthProvider, useAuth } from '@/src/contexts/AuthContext';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -11,6 +12,31 @@ export const unstable_settings = {
 };
 
 SplashScreen.preventAutoHideAsync();
+
+function RootLayoutNav() {
+  const { session, isLoading } = useAuth();
+
+  if (isLoading) return null;
+
+  return (
+    <Stack>
+      {/* 인증 전 — 로그인/가입 화면 */}
+      <Stack.Protected guard={!session}>
+        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+      </Stack.Protected>
+
+      {/* 인증 후 — 앱 본체 + 온보딩 */}
+      <Stack.Protected guard={!!session}>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="(onboarding)" options={{ headerShown: false, animation: 'fade' }} />
+      </Stack.Protected>
+
+      {/* 딥링크 초대 화면 — 항상 접근 가능 */}
+      <Stack.Screen name="invite" options={{ headerShown: false }} />
+      <Stack.Screen name="+not-found" />
+    </Stack>
+  );
+}
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
@@ -22,19 +48,14 @@ export default function RootLayout() {
   }, [error]);
 
   useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
+    if (loaded) SplashScreen.hideAsync();
   }, [loaded]);
 
-  if (!loaded) {
-    return null;
-  }
+  if (!loaded) return null;
 
   return (
-    <Stack>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="+not-found" />
-    </Stack>
+    <AuthProvider>
+      <RootLayoutNav />
+    </AuthProvider>
   );
 }
