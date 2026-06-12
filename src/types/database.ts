@@ -50,3 +50,17 @@ export interface PairWithProfiles extends Pair {
   parent: Profile | null;
   child: Profile;
 }
+
+export type AnswerVisibility = 'shared' | 'private' | 'later';
+
+export interface Answer {
+  id: string;
+  assignment_id: string;
+  user_id: string;
+  text_content: string | null;
+  audio_url: string | null;
+  audio_transcript: string | null;
+  photo_urls: string[];
+  visibility: AnswerVisibility;
+  created_at: string;
+}

@@ -5,13 +5,14 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { colors, typography, spacing, radius, touchTarget, shadows } from '@/src/theme';
 import { supabase } from '@/src/lib/supabase';
-import { getTodayAssignment, markAnswered, type TodayAssignment } from '@/src/lib/questions';
+import { getTodayAssignment, type TodayAssignment } from '@/src/lib/questions';
+import { getMyAnswer, type Answer } from '@/src/lib/answers';
 
 const DEPTH_LABEL = ['', '1단계', '2단계', '3단계', '4단계', '5단계'] as const;
 
@@ -20,48 +21,53 @@ function formatKoreanDate(date: Date): string {
 }
 
 export default function TodayScreen() {
+  const router = useRouter();
   const [assignment, setAssignment] = useState<TodayAssignment | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
+  const [myAnswer, setMyAnswer]     = useState<Answer | null>(null);
+  const [loading, setLoading]       = useState(true);
 
   const load = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     const result = await getTodayAssignment(user.id);
     setAssignment(result);
+
+    if (result?.isAnswered) {
+      const ans = await getMyAnswer(result.assignmentId);
+      setMyAnswer(ans);
+    }
     setLoading(false);
   }, []);
 
+  // 화면 포커스 시 재로드 (답변 제출 후 돌아왔을 때)
   useEffect(() => { load(); }, [load]);
 
-  const handleAnswerSubmit = useCallback(async (mode: 'voice' | 'text') => {
+  const handleOpenAnswerScreen = useCallback((mode: 'voice' | 'text') => {
     if (!assignment) return;
+    router.push({
+      pathname: '/answer',
+      params: {
+        assignmentId:       assignment.assignmentId,
+        questionText:       assignment.question.text,
+        questionCategory:   assignment.question.category,
+        questionDepthLevel: String(assignment.question.depthLevel),
+        initialMode:        mode,
+      },
+    });
+  }, [assignment, router]);
 
-    // 음성/텍스트 녹음은 다음 단계에서 구현 — 지금은 확인 후 완료 처리
-    Alert.alert(
-      mode === 'voice' ? '말씀해주세요' : '글로 답하기',
-      '아직 준비 중인 기능이에요.\n오늘의 질문을 마음속으로 생각해보시고, 완료로 표시하시겠어요?',
-      [
-        { text: '아니요', style: 'cancel' },
-        {
-          text: '완료로 표시',
-          onPress: async () => {
-            setSubmitting(true);
-            try {
-              await markAnswered(assignment.assignmentId);
-              setAssignment(prev =>
-                prev ? { ...prev, isAnswered: true } : prev,
-              );
-            } catch {
-              Alert.alert('오류', '저장 중 문제가 생겼어요. 다시 시도해주세요.');
-            } finally {
-              setSubmitting(false);
-            }
-          },
-        },
-      ],
-    );
-  }, [assignment]);
+  const handleViewMyAnswer = useCallback(() => {
+    if (!myAnswer || !assignment) return;
+    router.push({
+      pathname: '/answer-detail',
+      params: {
+        answerId:        myAnswer.id,
+        questionText:    assignment.question.text,
+        questionCategory:assignment.question.category,
+        isMine:          'true',
+      },
+    });
+  }, [myAnswer, assignment, router]);
 
   const today = formatKoreanDate(new Date());
 
@@ -88,12 +94,15 @@ export default function TodayScreen() {
             </Text>
           </View>
         ) : assignment.isAnswered ? (
-          <AnsweredState assignment={assignment} />
+          <AnsweredState
+            assignment={assignment}
+            myAnswer={myAnswer}
+            onViewAnswer={handleViewMyAnswer}
+          />
         ) : (
           <UnansweredState
             assignment={assignment}
-            submitting={submitting}
-            onAnswer={handleAnswerSubmit}
+            onAnswer={handleOpenAnswerScreen}
           />
         )}
       </ScrollView>
@@ -104,11 +113,9 @@ export default function TodayScreen() {
 /* ─── 미답변 상태 ─────────────────────────────────────────────────────────── */
 function UnansweredState({
   assignment,
-  submitting,
   onAnswer,
 }: {
   assignment: TodayAssignment;
-  submitting: boolean;
   onAnswer: (mode: 'voice' | 'text') => void;
 }) {
   return (
@@ -123,17 +130,15 @@ function UnansweredState({
 
       <View style={styles.answerSection}>
         <TouchableOpacity
-          style={[styles.voiceButton, submitting && styles.buttonDisabled]}
+          style={styles.voiceButton}
           activeOpacity={0.8}
-          disabled={submitting}
           onPress={() => onAnswer('voice')}
         >
           <Text style={styles.voiceButtonText}>🎙 말씀해주세요</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.textButton, submitting && styles.buttonDisabled]}
+          style={styles.textButton}
           activeOpacity={0.8}
-          disabled={submitting}
           onPress={() => onAnswer('text')}
         >
           <Text style={styles.textButtonText}>글로 답하기</Text>
@@ -150,17 +155,32 @@ function UnansweredState({
 }
 
 /* ─── 답변 완료 상태 ──────────────────────────────────────────────────────── */
-function AnsweredState({ assignment }: { assignment: TodayAssignment }) {
+function AnsweredState({
+  assignment,
+  myAnswer,
+  onViewAnswer,
+}: {
+  assignment: TodayAssignment;
+  myAnswer: Answer | null;
+  onViewAnswer: () => void;
+}) {
   return (
     <>
-      <View style={styles.completedCard}>
+      <TouchableOpacity
+        style={styles.completedCard}
+        onPress={myAnswer ? onViewAnswer : undefined}
+        activeOpacity={myAnswer ? 0.8 : 1}
+      >
         <Text style={styles.completedIcon}>✓</Text>
         <Text style={styles.completedTitle}>오늘의 이야기를 나눠주셨어요</Text>
         <Text style={styles.completedQuestion}>"{assignment.question.text}"</Text>
         <Text style={styles.completedMeta}>
           {assignment.question.category} · 깊이 {DEPTH_LABEL[assignment.question.depthLevel]}
         </Text>
-      </View>
+        {myAnswer && (
+          <Text style={styles.completedViewLink}>내 답변 보기 →</Text>
+        )}
+      </TouchableOpacity>
 
       <View style={styles.tomorrowCard}>
         <Text style={styles.tomorrowText}>내일 또 만나요 🌿</Text>
@@ -191,7 +211,6 @@ function PartnerStatusBadge({
   if (displayName === null) return null;
 
   const name = displayName || '상대방';
-
   let message: string;
   if (answered === null || answered === false) {
     message = myAnswered
@@ -204,7 +223,7 @@ function PartnerStatusBadge({
   }
 
   return (
-    <View style={[styles.partnerBadge, answered && styles.partnerBadgeActive]}>
+    <View style={[styles.partnerBadge, !!answered && styles.partnerBadgeActive]}>
       <Text style={styles.partnerDot}>{answered ? '●' : '○'}</Text>
       <Text style={styles.partnerText}>{message}</Text>
     </View>
@@ -212,35 +231,18 @@ function PartnerStatusBadge({
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  scroll: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-  header: {
-    paddingVertical: spacing.xl,
-  },
+  container: { flex: 1, backgroundColor: colors.background },
+  scroll:    { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl },
+  header:    { paddingVertical: spacing.xl },
   greeting: {
     fontSize: typography.size.xxl,
     fontWeight: typography.weight.bold,
     color: colors.textPrimary,
     marginBottom: spacing.xs,
   },
-  date: {
-    fontSize: typography.size.sm,
-    color: colors.textSecondary,
-  },
-  loadingBox: {
-    paddingTop: spacing.xxl * 2,
-    alignItems: 'center',
-  },
-  emptyBox: {
-    paddingTop: spacing.xxl,
-    alignItems: 'center',
-  },
+  date: { fontSize: typography.size.sm, color: colors.textSecondary },
+  loadingBox: { paddingTop: spacing.xxl * 2, alignItems: 'center' },
+  emptyBox:   { paddingTop: spacing.xxl, alignItems: 'center' },
   emptyText: {
     fontSize: typography.size.md,
     color: colors.textSecondary,
@@ -248,7 +250,6 @@ const styles = StyleSheet.create({
     lineHeight: typography.size.md * typography.lineHeight.relaxed,
   },
 
-  // 질문 카드
   questionCard: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
@@ -273,16 +274,9 @@ const styles = StyleSheet.create({
     lineHeight: typography.size.lg * typography.lineHeight.relaxed,
     marginBottom: spacing.md,
   },
-  questionMeta: {
-    fontSize: typography.size.xs,
-    color: colors.textDisabled,
-  },
+  questionMeta: { fontSize: typography.size.xs, color: colors.textDisabled },
 
-  // 답변 버튼
-  answerSection: {
-    gap: spacing.md,
-    marginBottom: spacing.xl,
-  },
+  answerSection: { gap: spacing.md, marginBottom: spacing.xl },
   voiceButton: {
     backgroundColor: colors.primary,
     borderRadius: radius.md,
@@ -310,11 +304,7 @@ const styles = StyleSheet.create({
     fontWeight: typography.weight.medium,
     color: colors.textSecondary,
   },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
 
-  // 완료 카드
   completedCard: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
@@ -325,17 +315,8 @@ const styles = StyleSheet.create({
     borderTopWidth: 4,
     borderTopColor: colors.success,
   },
-  completedIcon: {
-    fontSize: 32,
-    color: colors.success,
-    marginBottom: spacing.md,
-  },
-  completedTitle: {
-    fontSize: typography.size.md,
-    fontWeight: typography.weight.semibold,
-    color: colors.success,
-    marginBottom: spacing.md,
-  },
+  completedIcon:     { fontSize: 32, color: colors.success, marginBottom: spacing.md },
+  completedTitle:    { fontSize: typography.size.md, fontWeight: typography.weight.semibold, color: colors.success, marginBottom: spacing.md },
   completedQuestion: {
     fontSize: typography.size.md,
     fontWeight: typography.weight.medium,
@@ -345,12 +326,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     fontStyle: 'italic',
   },
-  completedMeta: {
-    fontSize: typography.size.xs,
-    color: colors.textDisabled,
-  },
+  completedMeta:     { fontSize: typography.size.xs, color: colors.textDisabled, marginBottom: spacing.sm },
+  completedViewLink: { fontSize: typography.size.sm, color: colors.primary, fontWeight: typography.weight.medium },
 
-  // 내일 카드
   tomorrowCard: {
     backgroundColor: colors.surfaceElevated,
     borderRadius: radius.md,
@@ -358,20 +336,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
     alignItems: 'center',
   },
-  tomorrowText: {
-    fontSize: typography.size.md,
-    fontWeight: typography.weight.semibold,
-    color: colors.secondary,
-    marginBottom: spacing.xs,
-  },
-  tomorrowSub: {
-    fontSize: typography.size.sm,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: typography.size.sm * typography.lineHeight.normal,
-  },
+  tomorrowText: { fontSize: typography.size.md, fontWeight: typography.weight.semibold, color: colors.secondary, marginBottom: spacing.xs },
+  tomorrowSub:  { fontSize: typography.size.sm, color: colors.textSecondary, textAlign: 'center', lineHeight: typography.size.sm * typography.lineHeight.normal },
 
-  // 파트너 배지
   partnerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -380,15 +347,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: spacing.md,
   },
-  partnerBadgeActive: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.secondary,
-  },
-  partnerDot: {
-    fontSize: 12,
-    color: colors.textDisabled,
-  },
+  partnerBadgeActive: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.secondary },
+  partnerDot: { fontSize: 12, color: colors.textDisabled },
   partnerText: {
     flex: 1,
     fontSize: typography.size.sm,

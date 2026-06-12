@@ -2,6 +2,7 @@
 -- DeathAfter — 전체 마이그레이션 (Supabase SQL Editor에 붙여넣고 실행)
 -- 파일 1: 인증 및 페어링
 -- 파일 2: 질문 시스템 + 시드 데이터 60개
+-- 파일 3: 답변 시스템 + Storage 버킷 + RLS
 -- =====================================================================
 
 -- Enable pgcrypto for gen_random_bytes
@@ -312,3 +313,115 @@ INSERT INTO public.question_bank (question_text, category, depth_level, target_a
 ('가족 중에 더 잘 대해드렸어야 했다고 후회하는 분이 계신가요?', '못 했던 말', 4, '공용'),
 ('저에게 꼭 사과하고 싶은 것이 있으신가요?',                   '못 했던 말', 4, '공용'),
 ('자식에게 꼭 남기고 싶은 말이 있다면 무엇인가요?',            '못 했던 말', 5, '부모용');
+
+-- ─── answers ─────────────────────────────────────────────────────────────────
+CREATE TABLE public.answers (
+  id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  assignment_id    uuid        NOT NULL REFERENCES public.daily_assignments(id) ON DELETE CASCADE,
+  user_id          uuid        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  text_content     text,
+  audio_url        text,
+  audio_transcript text,
+  photo_urls       jsonb       NOT NULL DEFAULT '[]'::jsonb,
+  visibility       text        NOT NULL DEFAULT 'shared'
+                               CHECK (visibility IN ('shared', 'private', 'later')),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(assignment_id, user_id)
+);
+
+ALTER TABLE public.answers ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "answers_own_select" ON public.answers
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "answers_partner_shared_select" ON public.answers
+  FOR SELECT USING (
+    visibility = 'shared'
+    AND EXISTS (
+      SELECT 1 FROM public.pairs p
+      WHERE p.status = 'active'
+        AND (
+          (p.parent_id = auth.uid() AND p.child_id = answers.user_id)
+          OR (p.child_id  = auth.uid() AND p.parent_id = answers.user_id)
+        )
+    )
+  );
+
+CREATE POLICY "answers_own_insert" ON public.answers
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "answers_own_update" ON public.answers
+  FOR UPDATE USING (auth.uid() = user_id);
+
+-- ─── Storage: answer-audio ────────────────────────────────────────────────────
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'answer-audio', 'answer-audio', false,
+  52428800,
+  ARRAY['audio/m4a', 'audio/mpeg', 'audio/aac', 'audio/mp4', 'audio/x-m4a']
+);
+
+CREATE POLICY "audio_owner_all" ON storage.objects
+  FOR ALL
+  USING (
+    bucket_id = 'answer-audio'
+    AND auth.uid()::text = (storage.foldername(name))[1]
+  )
+  WITH CHECK (
+    bucket_id = 'answer-audio'
+    AND auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+CREATE POLICY "audio_partner_shared_select" ON storage.objects
+  FOR SELECT USING (
+    bucket_id = 'answer-audio'
+    AND EXISTS (
+      SELECT 1 FROM public.answers a
+      JOIN public.pairs p ON (
+        p.status = 'active'
+        AND (
+          (p.parent_id = auth.uid() AND p.child_id = a.user_id)
+          OR (p.child_id  = auth.uid() AND p.parent_id = a.user_id)
+        )
+      )
+      WHERE a.audio_url = name
+        AND a.visibility = 'shared'
+    )
+  );
+
+-- ─── Storage: answer-photos ───────────────────────────────────────────────────
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'answer-photos', 'answer-photos', false,
+  10485760,
+  ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
+);
+
+CREATE POLICY "photos_owner_all" ON storage.objects
+  FOR ALL
+  USING (
+    bucket_id = 'answer-photos'
+    AND auth.uid()::text = (storage.foldername(name))[1]
+  )
+  WITH CHECK (
+    bucket_id = 'answer-photos'
+    AND auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+CREATE POLICY "photos_partner_shared_select" ON storage.objects
+  FOR SELECT USING (
+    bucket_id = 'answer-photos'
+    AND EXISTS (
+      SELECT 1 FROM public.answers a
+      CROSS JOIN jsonb_array_elements_text(a.photo_urls) AS photo_path
+      JOIN public.pairs p ON (
+        p.status = 'active'
+        AND (
+          (p.parent_id = auth.uid() AND p.child_id = a.user_id)
+          OR (p.child_id  = auth.uid() AND p.parent_id = a.user_id)
+        )
+      )
+      WHERE photo_path = name
+        AND a.visibility = 'shared'
+    )
+  );
